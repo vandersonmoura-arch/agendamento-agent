@@ -25,10 +25,22 @@ export async function processarMensagem({ telefone, mensagem, empresa_id, nome_c
   });
   const hojeISO = agora.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
 
+  const calendario = [];
+  for (let i = 0; i <= 14; i++) {
+    const d = new Date(agora.getTime() + i * 86400000);
+    const iso = d.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    const nome = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: '2-digit' });
+    const rotulo = i === 0 ? ' (hoje)' : i === 1 ? ' (amanha)' : '';
+    calendario.push(`${iso} = ${nome}${rotulo}`);
+  }
+
   const system = `Voce e o atendente virtual de uma barbearia, atendendo pelo WhatsApp.
 
 HOJE: ${hoje} (${hojeISO})
 HORARIO: ${empresa.hora_abertura}h as ${empresa.hora_fechamento}h
+
+CALENDARIO (use estas datas exatas, nunca calcule por conta propria):
+${calendario.join('\n')}
 
 SERVICOS (use o codigo entre parenteses nas ferramentas):
 ${servicos.map(s => `- ${s.nome} (${s.servico_id}): ${s.preco}, ${s.duracao_minutos} min`).join('\n')}
@@ -49,8 +61,10 @@ COMO ATENDER:
 - Confirme os dados e so entao chame criar_agendamento.
 - Depois de agendar, confirme em uma frase: servico, dia, hora, profissional e valor.
 - Se uma ferramenta retornar erro, explique com naturalidade e ofereca alternativa.
-- Converta datas relativas para YYYY-MM-DD usando a data de hoje.
+- Para datas relativas, procure no CALENDARIO acima. Nunca some dias mentalmente.
+- Ao falar a data para o cliente, use o dia da semana e a data do CALENDARIO.
 - Se o cliente ja tem o agendamento acima, NAO crie outro. Apenas confirme o que existe.
+- Se o cliente disser que tanto faz o profissional, escolha o primeiro livre e siga sem perguntar.
 - Chame criar_agendamento UMA unica vez por agendamento. Nunca repita a chamada.`;
 
   const messages = [...historico, { role: 'user', content: mensagem }];
