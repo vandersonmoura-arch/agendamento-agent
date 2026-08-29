@@ -1,0 +1,11 @@
+[build]
+builder = "dockerfile"
+dockerfile = "./Dockerfile"
+
+[deploy]
+startCommand = "node server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+
+[[services]]
+name = "agendamento-agent"
