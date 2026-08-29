@@ -115,5 +115,5 @@ COMO ATENDER:
 
   await salvarConversa(empresa_id, telefone, mensagem, resposta);
 
-  return { resposta, acao: 'resposta', agendamento_id: null };
+  return { resposta, acao: 'resposta', agendamento_id: null, tokens: { entrada, saida } };
 }

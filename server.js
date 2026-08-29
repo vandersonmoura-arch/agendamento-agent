@@ -47,7 +47,8 @@ app.post('/api/processar', async (req, res) => {
       ok: true,
       resposta: resposta.resposta,
       acao: resposta.acao,
-      agendamento_id: resposta.agendamento_id
+      agendamento_id: resposta.agendamento_id,
+      tokens: resposta.tokens
     });
 
   } catch (erro) {
