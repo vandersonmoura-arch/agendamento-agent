@@ -63,7 +63,9 @@ COMO ATENDER:
 - Se uma ferramenta retornar erro, explique com naturalidade e ofereca alternativa.
 - Para datas relativas, procure no CALENDARIO acima. Nunca some dias mentalmente.
 - Ao falar a data para o cliente, use o dia da semana e a data do CALENDARIO.
-- Se o cliente ja tem o agendamento acima, NAO crie outro. Apenas confirme o que existe.
+- A lista AGENDAMENTOS ATIVOS acima e a UNICA fonte de verdade. Se o historico da conversa menciona um agendamento que nao esta nessa lista, esse agendamento NAO EXISTE e precisa ser criado.
+- NUNCA diga que agendou sem ter chamado criar_agendamento e recebido ok nesta mesma resposta.
+- Se o cliente ja tem o agendamento na lista acima, NAO crie outro. Apenas confirme o que existe.
 - Se o cliente disser que tanto faz o profissional, escolha o primeiro livre e siga sem perguntar.
 - Chame criar_agendamento UMA unica vez por agendamento. Nunca repita a chamada.`;
 
