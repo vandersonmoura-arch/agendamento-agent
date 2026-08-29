@@ -72,6 +72,8 @@ COMO ATENDER:
 
   let resposta = '';
   let entrada = 0, saida = 0;
+  let agendouComSucesso = false;
+  let ultimoErroFerramenta = null;
 
   for (let volta = 0; volta < MAX_VOLTAS; volta++) {
     const r = await client.messages.create({
@@ -102,7 +104,14 @@ COMO ATENDER:
         console.error('Ferramenta ' + c.name + ' falhou:', e.message);
         out = { erro: 'falha_interna' };
       }
-      console.log('[' + telefone + '] tool=' + c.name + ' args=' + JSON.stringify(c.input));
+      if (c.name === 'criar_agendamento') {
+        if (out && out.ok) {
+          agendouComSucesso = true;
+        } else {
+          ultimoErroFerramenta = (out && out.erro) || 'desconhecido';
+        }
+      }
+      console.log('[' + telefone + '] tool=' + c.name + ' ok=' + (out && !out.erro) + ' args=' + JSON.stringify(c.input));
       resultados.push({ type: 'tool_result', tool_use_id: c.id, content: JSON.stringify(out) });
     }
 
@@ -110,6 +119,18 @@ COMO ATENDER:
   }
 
   if (!resposta) resposta = 'Desculpe, tive um problema aqui. Pode repetir, por favor?';
+
+  // Trava de seguranca: nunca afirmar agendamento que nao foi gravado.
+  const afirmaAgendamento = /agendad|agendamento confirmado|marcado para|ta marcado|esta marcado|confirmado!/i.test(resposta);
+  if (afirmaAgendamento && !agendouComSucesso) {
+    const jaTinha = jaMarcados.length > 0;
+    if (!jaTinha) {
+      console.error('[' + telefone + '] ALERTA: resposta afirmou agendamento sem gravar. erro=' + ultimoErroFerramenta);
+      resposta = ultimoErroFerramenta === 'horario_ocupado'
+        ? 'Opa, esse horario acabou de ser preenchido. Me diz outro horario que eu verifico pra voce.'
+        : 'Desculpe, nao consegui concluir o agendamento agora. Pode tentar de novo em instantes ou me chamar que um atendente resolve.';
+    }
+  }
 
   console.log('[' + telefone + '] tokens in=' + entrada + ' out=' + saida);
 
