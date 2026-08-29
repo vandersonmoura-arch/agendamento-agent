@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { salvarConversa, obterHistoricoConversas, obterConfigurEmpresa, obterServicos, obterProfissionais } from './database.js';
 import { FERRAMENTAS, executarFerramenta } from './tools.js';
+import { listarAgendamentosCliente } from './database.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -10,11 +11,12 @@ const MODELO = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_VOLTAS = 5;
 
 export async function processarMensagem({ telefone, mensagem, empresa_id, nome_cliente }) {
-  const [historico, empresa, servicos, profissionais] = await Promise.all([
+  const [historico, empresa, servicos, profissionais, jaMarcados] = await Promise.all([
     obterHistoricoConversas(empresa_id, telefone),
     obterConfigurEmpresa(empresa_id),
     obterServicos(empresa_id),
-    obterProfissionais(empresa_id)
+    obterProfissionais(empresa_id),
+    listarAgendamentosCliente(empresa_id, telefone)
   ]);
 
   const agora = new Date();
@@ -36,6 +38,9 @@ ${profissionais.map(p => `- ${p.nome} (${p.profissional_id})`).join('\n')}
 
 CLIENTE: ${nome_cliente || 'nao informado'}
 
+AGENDAMENTOS ATIVOS DESTE CLIENTE:
+${jaMarcados.length ? jaMarcados.map(a => `- id ${a.id}: ${a.servico_nome} em ${a.data} as ${String(a.hora_inicio).slice(0,5)} com ${a.profissional_nome}`).join('\n') : '- nenhum'}
+
 COMO ATENDER:
 - Portugues brasileiro, cordial e direto. Mensagens curtas, sem markdown.
 - NUNCA invente horarios livres. Sempre chame consultar_disponibilidade antes de oferecer.
@@ -44,7 +49,9 @@ COMO ATENDER:
 - Confirme os dados e so entao chame criar_agendamento.
 - Depois de agendar, confirme em uma frase: servico, dia, hora, profissional e valor.
 - Se uma ferramenta retornar erro, explique com naturalidade e ofereca alternativa.
-- Converta datas relativas para YYYY-MM-DD usando a data de hoje.`;
+- Converta datas relativas para YYYY-MM-DD usando a data de hoje.
+- Se o cliente ja tem o agendamento acima, NAO crie outro. Apenas confirme o que existe.
+- Chame criar_agendamento UMA unica vez por agendamento. Nunca repita a chamada.`;
 
   const messages = [...historico, { role: 'user', content: mensagem }];
   const ctx = { empresa_id, telefone, nome_cliente };
