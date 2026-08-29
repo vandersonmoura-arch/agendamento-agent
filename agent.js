@@ -5,109 +5,63 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const client = new Anthropic();
-
-const PROMPT_SISTEMA = `Você é um assistente de agendamento inteligente para uma barbearia.
-
-Suas responsabilidades:
-1. Entender a intenção do cliente (agendar, cancelar, confirmação, dúvidas)
-2. Manter contexto da conversa (histórico)
-3. Ser amigável e profissional
-4. Sempre confirmar informações antes de agendar
-5. Sugerir horários baseado em disponibilidade
-6. Responder em português brasileiro
-
-Formatos de resposta:
-- Para agendamento: Sempre pergunte: data preferida, serviço, profissional se tiver preferência
-- Para cancelamento: Confirme qual agendamento cancelar
-- Para confirmação: Agradeça e reconfirme os detalhes
-- Para dúvidas: Responda com informações da barbearia
-
-Nunca:
-- Agende sem confirmar todos os dados
-- Cancele sem confirmação do cliente
-- Invente informações da barbearia (use dados reais do contexto)`;
+const MODELO = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 
 export async function processarMensagem({ telefone, mensagem, empresa_id, nome_cliente }) {
-  try {
-    const historico = await obterHistoricoConversas(empresa_id, telefone);
-    const empresa = await obterConfigurEmpresa(empresa_id);
-    const servicos = await obterServicos(empresa_id);
-    const profissionais = await obterProfissionais(empresa_id);
+  const [historico, empresa, servicos, profissionais] = await Promise.all([
+    obterHistoricoConversas(empresa_id, telefone),
+    obterConfigurEmpresa(empresa_id),
+    obterServicos(empresa_id),
+    obterProfissionais(empresa_id)
+  ]);
 
-    const contextoEmpresa = `
-INFORMAÇÕES DA BARBEARIA:
-- Horários: ${empresa.hora_abertura}h até ${empresa.hora_fechamento}h
-- Dias fechados: ${empresa.dias_fechados || 'Nenhum'}
-- Antecedência mínima: ${empresa.antecedencia_minima_horas || 24}h
-- Email: ${empresa.email_dono}
+  const hoje = new Date().toLocaleDateString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
 
-SERVIÇOS DISPONÍVEIS:
-${servicos.map(s => `- ${s.nome}: R$ ${s.preco} (${s.duracao_minutos}min)`).join('\n')}
+  const system = `Voce e o atendente virtual de uma barbearia. Atende clientes pelo WhatsApp.
+
+DATA DE HOJE: ${hoje}
+
+HORARIOS: das ${empresa.hora_abertura}h as ${empresa.hora_fechamento}h
+ANTECEDENCIA MINIMA: ${empresa.antecedencia_minima_horas || 24}h
+
+SERVICOS:
+${servicos.length ? servicos.map(s => `- ${s.nome}: R$ ${s.preco} (${s.duracao_minutos} min)`).join('\n') : '- Nenhum servico cadastrado'}
 
 PROFISSIONAIS:
-${profissionais.map(p => `- ${p.nome} (${p.ativo ? 'ativo' : 'indisponível'})`).join('\n')}
+${profissionais.length ? profissionais.map(p => `- ${p.nome}`).join('\n') : '- Nenhum profissional cadastrado'}
 
-HISTÓRICO DE CONVERSAS ANTERIORES:
-${historico.length > 0 
-  ? historico.map(h => `${h.criada_em}: ${h.mensagem_cliente}\n→ ${h.resposta_agente}`).join('\n\n')
-  : 'Primeira conversa com este cliente'
-}`;
+CLIENTE: ${nome_cliente || 'nao informado'} (${telefone})
 
-    const mensagens = [
-      {
-        role: 'user',
-        content: `${contextoEmpresa}\n\nNOVA MENSAGEM DO CLIENTE:\n"${mensagem}"\n\nCliente: ${nome_cliente || 'Desconhecido'}\nTelefone: ${telefone}\n\nResponda de forma amigável e profissional. Se for agendar, confirme todos os dados.`
-      }
-    ];
+REGRAS:
+- Responda em portugues brasileiro, tom cordial e direto.
+- Mensagens curtas, adequadas ao WhatsApp. Sem markdown.
+- Use APENAS os servicos, precos e profissionais listados acima. Nunca invente.
+- Se nao houver servicos cadastrados, diga que vai verificar e peca um momento.
+- Para agendar, colete: servico, data, horario e profissional (se houver preferencia).
+- Confirme todos os dados antes de fechar o agendamento.
+- Considere o que ja foi dito antes nesta conversa. Nao repita perguntas ja respondidas.`;
 
-    console.log(`🤖 Chamando Claude para: ${telefone}`);
-    
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
-      system: PROMPT_SISTEMA,
-      messages: mensagens
-    });
+  const messages = [...historico, { role: 'user', content: mensagem }];
 
-    const respostaTexto = response.content[0].text;
+  const response = await client.messages.create({
+    model: MODELO,
+    max_tokens: 1024,
+    system,
+    messages
+  });
 
-    await salvarConversa(empresa_id, telefone, mensagem, respostaTexto);
+  const texto = response.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('\n')
+    .trim();
 
-    let acao = 'resposta';
-    if (respostaTexto.toLowerCase().includes('agendad') || respostaTexto.toLowerCase().includes('marqu')) {
-      acao = 'agendamento';
-    } else if (respostaTexto.toLowerCase().includes('cancelad') || respostaTexto.toLowerCase().includes('desmarc')) {
-      acao = 'cancelamento';
-    } else if (respostaTexto.toLowerCase().includes('confirm')) {
-      acao = 'confirmacao';
-    }
+  console.log(`[${telefone}] in=${response.usage.input_tokens} out=${response.usage.output_tokens}`);
 
-    return {
-      resposta: respostaTexto,
-      acao: acao,
-      agendamento_id: null
-    };
+  await salvarConversa(empresa_id, telefone, mensagem, texto);
 
-  } catch (erro) {
-    console.error('❌ Erro em processarMensagem:', erro);
-    throw erro;
-  }
-}
-
-export async function analisarIntencao(mensagem) {
-  const intencoes = {
-    agendar: /agendar|marcar|quero um horário|reagendar|remarcar/i,
-    cancelar: /cancelar|desmarcar|não vou poder|desmarque|cancela/i,
-    confirmar: /confirma|confirmed|sim|ok|beleza|tudo bem/i,
-    servicos: /serviço|preço|quanto custa|valor|tabela|cardápio/i,
-    horario: /que horas|horário de funcionamento|abre|fecha|aberto/i
-  };
-
-  for (const [intencao, regex] of Object.entries(intencoes)) {
-    if (regex.test(mensagem)) {
-      return intencao;
-    }
-  }
-
-  return 'desconhecido';
+  return { resposta: texto, acao: 'resposta', agendamento_id: null };
 }

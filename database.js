@@ -33,46 +33,58 @@ export async function inicializarBanco() {
 
 export async function salvarConversa(empresa_id, telefone, mensagem_cliente, resposta_agente) {
   try {
-    const estado = {
-      ultimo_mensagem: mensagem_cliente,
-      ultima_resposta: resposta_agente,
-      timestamp: new Date().toISOString()
-    };
+    const novas = JSON.stringify([
+      { papel: 'user', texto: mensagem_cliente, em: new Date().toISOString() },
+      { papel: 'assistant', texto: resposta_agente, em: new Date().toISOString() }
+    ]);
 
     const query = `
-      INSERT INTO conversas (empresa_id, telefone, estado, status, criada_em, atualizado_em)
-      VALUES ($1, $2, $3, 'ativa', NOW(), NOW())
-      ON CONFLICT (empresa_id, telefone) DO UPDATE SET estado = $3, atualizado_em = NOW()
+      INSERT INTO conversas (empresa_id, telefone, estado, status)
+      VALUES ($1, $2, jsonb_build_object('mensagens', $3::jsonb), 'ativo')
+      ON CONFLICT (empresa_id, telefone) DO UPDATE
+      SET estado = jsonb_set(
+            COALESCE(conversas.estado, '{}'::jsonb),
+            '{mensagens}',
+            (
+              SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
+              FROM (
+                SELECT elem, ord
+                FROM jsonb_array_elements(
+                  COALESCE(conversas.estado->'mensagens', '[]'::jsonb) || $3::jsonb
+                ) WITH ORDINALITY AS t(elem, ord)
+                ORDER BY ord DESC
+                LIMIT 20
+              ) s
+            )
+          ),
+          atualizado_em = NOW()
       RETURNING id;
     `;
 
-    const result = await pool.query(query, [empresa_id, telefone, JSON.stringify(estado)]);
+    const result = await pool.query(query, [empresa_id, telefone, novas]);
     return result.rows[0];
   } catch (erro) {
-    console.error('❌ Erro ao salvar conversa:', erro);
+    console.error('Erro ao salvar conversa:', erro.message);
     throw erro;
   }
 }
 
 export async function obterHistoricoConversas(empresa_id, telefone) {
   try {
-    const query = `
-      SELECT * FROM conversas 
-      WHERE empresa_id = $1 AND telefone = $2
-      ORDER BY criada_em DESC
-      LIMIT 10;
-    `;
+    const result = await pool.query(
+      `SELECT estado FROM conversas WHERE empresa_id = $1 AND telefone = $2 LIMIT 1;`,
+      [empresa_id, telefone]
+    );
 
-    const result = await pool.query(query, [empresa_id, telefone]);
-    return result.rows.map(row => ({
-      id: row.id,
-      criada_em: row.criada_em,
-      mensagem_cliente: row.estado?.ultimo_mensagem || '',
-      resposta_agente: row.estado?.ultima_resposta || '',
-      status: row.status
+    if (result.rows.length === 0) return [];
+
+    const mensagens = result.rows[0].estado?.mensagens || [];
+    return mensagens.map(m => ({
+      role: m.papel === 'user' ? 'user' : 'assistant',
+      content: m.texto
     }));
   } catch (erro) {
-    console.error('❌ Erro ao obter histórico:', erro);
+    console.error('Erro ao obter historico:', erro.message);
     return [];
   }
 }
