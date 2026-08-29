@@ -269,3 +269,136 @@ export async function obterAgendamentoPorId(agendamento_id) {
     return null;
   }
 }
+
+// ===== AGENDA =====
+
+export async function obterServicoPorCodigo(empresa_id, servico_id) {
+  const r = await pool.query(
+    `SELECT * FROM servicos WHERE empresa_id = $1 AND servico_id = $2 AND ativo = true LIMIT 1;`,
+    [empresa_id, servico_id]
+  );
+  return r.rows[0] || null;
+}
+
+function hhmm(t) {
+  return String(t).slice(0, 5);
+}
+
+function somaMinutos(hora, minutos) {
+  const [h, m] = hora.split(':').map(Number);
+  const total = h * 60 + m + minutos;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+export async function calcularDisponibilidade(empresa_id, data, servico_id) {
+  const servico = await obterServicoPorCodigo(empresa_id, servico_id);
+  if (!servico) return { erro: 'servico_nao_encontrado' };
+
+  const empresa = await obterConfigurEmpresa(empresa_id);
+  const profissionais = await obterProfissionais(empresa_id);
+  if (!profissionais.length) return { erro: 'sem_profissionais' };
+
+  const abertura = empresa.hora_abertura ?? 9;
+  const fechamento = empresa.hora_fechamento ?? 19;
+  const duracao = servico.duracao_minutos;
+
+  const diaSemana = new Date(`${data}T12:00:00`).getDay();
+  const fechados = empresa.dias_fechados || [];
+  if (fechados.map(Number).includes(diaSemana)) {
+    return { data, fechado: true, horarios: [] };
+  }
+
+  const ocupados = await pool.query(
+    `SELECT profissional_id, hora_inicio, hora_fim FROM agendamentos
+     WHERE empresa_id = $1 AND data = $2 AND status IN ('pendente','confirmado');`,
+    [empresa_id, data]
+  );
+
+  const agora = new Date();
+  const minimoHoras = empresa.antecedencia_minima_horas ?? 0;
+  const limite = new Date(agora.getTime() + minimoHoras * 3600000);
+
+  const horarios = [];
+  for (let h = abertura; h < fechamento; h++) {
+    for (const m of [0, 30]) {
+      const inicio = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      const fim = somaMinutos(inicio, duracao);
+      if (fim > `${String(fechamento).padStart(2, '0')}:00`) continue;
+      if (new Date(`${data}T${inicio}:00`) < limite) continue;
+
+      const livres = profissionais.filter(p => {
+        return !ocupados.rows.some(o =>
+          o.profissional_id === p.profissional_id &&
+          inicio < hhmm(o.hora_fim) &&
+          fim > hhmm(o.hora_inicio)
+        );
+      });
+
+      if (livres.length) {
+        horarios.push({
+          hora: inicio,
+          profissionais: livres.map(p => ({ id: p.profissional_id, nome: p.nome }))
+        });
+      }
+    }
+  }
+
+  return { data, servico: servico.nome, duracao_minutos: duracao, horarios };
+}
+
+export async function agendar(empresa_id, telefone, cliente_nome, servico_id, profissional_id, data, hora_inicio) {
+  const servico = await obterServicoPorCodigo(empresa_id, servico_id);
+  if (!servico) return { erro: 'servico_nao_encontrado' };
+
+  const prof = await pool.query(
+    `SELECT * FROM profissionais WHERE empresa_id = $1 AND profissional_id = $2 AND ativo = true LIMIT 1;`,
+    [empresa_id, profissional_id]
+  );
+  if (!prof.rows.length) return { erro: 'profissional_nao_encontrado' };
+
+  const inicio = hhmm(hora_inicio);
+  const fim = somaMinutos(inicio, servico.duracao_minutos);
+
+  const conflito = await pool.query(
+    `SELECT 1 FROM agendamentos
+     WHERE empresa_id = $1 AND profissional_id = $2 AND data = $3
+       AND status IN ('pendente','confirmado')
+       AND $4 < hora_fim AND $5 > hora_inicio LIMIT 1;`,
+    [empresa_id, profissional_id, data, inicio, fim]
+  );
+  if (conflito.rows.length) return { erro: 'horario_ocupado' };
+
+  const r = await pool.query(
+    `INSERT INTO agendamentos
+      (id, empresa_id, telefone, cliente_nome, servico_id, servico_nome,
+       profissional_id, profissional_nome, data, hora_inicio, hora_fim, preco, status, criada_em)
+     VALUES (gen_random_uuid(), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'confirmado',NOW())
+     RETURNING id, data, hora_inicio, hora_fim, servico_nome, profissional_nome, preco;`,
+    [empresa_id, telefone, cliente_nome, servico_id, servico.nome,
+     profissional_id, prof.rows[0].nome, data, inicio, fim, servico.preco]
+  );
+
+  return { ok: true, agendamento: r.rows[0] };
+}
+
+export async function listarAgendamentosCliente(empresa_id, telefone) {
+  const r = await pool.query(
+    `SELECT id, data, hora_inicio, servico_nome, profissional_nome, status
+     FROM agendamentos
+     WHERE empresa_id = $1 AND telefone = $2 AND status IN ('pendente','confirmado')
+       AND data >= CURRENT_DATE
+     ORDER BY data, hora_inicio;`,
+    [empresa_id, telefone]
+  );
+  return r.rows;
+}
+
+export async function cancelarPorId(empresa_id, telefone, agendamento_id) {
+  const r = await pool.query(
+    `UPDATE agendamentos SET status='cancelado', cancelado_em=NOW(), atualizado_em=NOW()
+     WHERE id=$1 AND empresa_id=$2 AND telefone=$3 AND status IN ('pendente','confirmado')
+     RETURNING id, data, hora_inicio, servico_nome;`,
+    [agendamento_id, empresa_id, telefone]
+  );
+  return r.rows.length ? { ok: true, cancelado: r.rows[0] } : { erro: 'nao_encontrado' };
+}
