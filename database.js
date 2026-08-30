@@ -291,8 +291,18 @@ function somaMinutos(hora, minutos) {
 }
 
 export async function calcularDisponibilidade(empresa_id, data, servico_id) {
-  const servico = await obterServicoPorCodigo(empresa_id, servico_id);
-  if (!servico) return { erro: 'servico_nao_encontrado' };
+  let servico = null;
+  let consultaGeral = false;
+
+  if (servico_id) {
+    servico = await obterServicoPorCodigo(empresa_id, servico_id);
+    if (!servico) return { erro: 'servico_nao_encontrado' };
+  } else {
+    const todos = await obterServicos(empresa_id);
+    if (!todos.length) return { erro: 'sem_servicos' };
+    servico = todos.reduce((a, b) => a.duracao_minutos <= b.duracao_minutos ? a : b);
+    consultaGeral = true;
+  }
 
   const empresa = await obterConfigurEmpresa(empresa_id);
   const profissionais = await obterProfissionais(empresa_id);
@@ -343,7 +353,13 @@ export async function calcularDisponibilidade(empresa_id, data, servico_id) {
     }
   }
 
-  return { data, servico: servico.nome, duracao_minutos: duracao, horarios };
+  return {
+    data,
+    servico: consultaGeral ? null : servico.nome,
+    consulta_geral: consultaGeral,
+    duracao_considerada: duracao,
+    horarios
+  };
 }
 
 export async function agendar(empresa_id, telefone, cliente_nome, servico_id, profissional_id, data, hora_inicio) {
@@ -401,4 +417,40 @@ export async function cancelarPorId(empresa_id, telefone, agendamento_id) {
     [agendamento_id, empresa_id, telefone]
   );
   return r.rows.length ? { ok: true, cancelado: r.rows[0] } : { erro: 'nao_encontrado' };
+}
+
+// ===== LEMBRETES =====
+
+export async function reservarLembretes(tipo) {
+  const coluna = tipo === '24h' ? 'lembrete_24h_em' : 'lembrete_2h_em';
+  const minimo = tipo === '24h' ? '23 hours' : '90 minutes';
+  const maximo = tipo === '24h' ? '25 hours' : '150 minutes';
+
+  const r = await pool.query(`
+    UPDATE agendamentos SET ${coluna} = NOW()
+    WHERE id IN (
+      SELECT a.id FROM agendamentos a
+      WHERE a.status = 'confirmado'
+        AND a.${coluna} IS NULL
+        AND (a.data + a.hora_inicio)
+            BETWEEN (NOW() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${minimo}'
+                AND (NOW() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '${maximo}'
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id, empresa_id, telefone, cliente_nome, servico_nome,
+              profissional_nome, data, hora_inicio;
+  `);
+
+  return r.rows;
+}
+
+export async function obterEvolutionDaEmpresa(empresa_id) {
+  const r = await pool.query(
+    `SELECT c.evolution_base_url, e.instancia_evolution
+     FROM configuracoes_empresa c
+     JOIN empresas e ON e.id = c.empresa_id
+     WHERE c.empresa_id = $1 LIMIT 1;`,
+    [empresa_id]
+  );
+  return r.rows[0] || null;
 }

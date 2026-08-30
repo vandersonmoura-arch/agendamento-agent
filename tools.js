@@ -8,9 +8,9 @@ export const FERRAMENTAS = [
       type: 'object',
       properties: {
         data: { type: 'string', description: 'Data no formato YYYY-MM-DD' },
-        servico_id: { type: 'string', description: 'Codigo do servico: corte, barba ou combo' }
+        servico_id: { type: 'string', description: 'Codigo do servico: corte, barba ou combo. Opcional - omita quando o cliente ainda nao escolheu o servico e so quer saber os horarios livres.' }
       },
-      required: ['data', 'servico_id']
+      required: ['data']
     }
   },
   {

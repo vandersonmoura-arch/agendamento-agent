@@ -56,6 +56,7 @@ ${jaMarcados.length ? jaMarcados.map(a => `- id ${a.id}: ${a.servico_nome} em ${
 COMO ATENDER:
 - Portugues brasileiro, cordial e direto. Mensagens curtas, sem markdown.
 - NUNCA invente horarios livres. Sempre chame consultar_disponibilidade antes de oferecer.
+- Se o cliente perguntar horarios sem dizer o servico, consulte sem servico_id e mostre os horarios. So depois pergunte o servico.
 - Antes de agendar, tenha os quatro dados: servico, data, horario e profissional.
 - Se o cliente nao escolher profissional, ofereca os que estiverem livres.
 - Confirme os dados e so entao chame criar_agendamento.
