@@ -39,7 +39,7 @@ export async function processarMensagem({ telefone, mensagem, empresa_id, nome_c
 HOJE: ${hoje} (${hojeISO})
 HORARIO: ${empresa.hora_abertura}h as ${empresa.hora_fechamento}h
 
-CALENDARIO (use estas datas exatas, nunca calcule por conta propria):
+CALENDARIO DE REFERENCIA (serve para converter expressoes como 'sexta que vem' em data. NAO e limite de agendamento: qualquer data futura pode ser agendada, basta consultar a disponibilidade):
 ${calendario.join('\n')}
 
 SERVICOS (use o codigo entre parenteses nas ferramentas):
@@ -64,6 +64,7 @@ COMO ATENDER:
 - Depois de agendar, confirme em uma frase: servico, dia, hora, profissional e valor.
 - Se uma ferramenta retornar erro, explique com naturalidade e ofereca alternativa.
 - Para datas relativas, procure no CALENDARIO acima. Nunca some dias mentalmente.
+- Se o cliente informar uma data explicita (ex: 19/09), use essa data direto, mesmo que nao apareca no calendario acima. Nunca diga que uma data e distante demais.
 - Ao falar a data para o cliente, use o dia da semana e a data do CALENDARIO.
 - A lista AGENDAMENTOS ATIVOS acima e a UNICA fonte de verdade. Se o historico da conversa menciona um agendamento que nao esta nessa lista, esse agendamento NAO EXISTE e precisa ser criado.
 - NUNCA diga que agendou sem ter chamado criar_agendamento e recebido ok nesta mesma resposta.
