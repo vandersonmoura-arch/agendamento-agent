@@ -124,16 +124,49 @@ COMO ATENDER:
 
   if (!resposta) resposta = 'Desculpe, tive um problema aqui. Pode repetir, por favor?';
 
-  // Trava de seguranca: nunca afirmar agendamento que nao foi gravado.
-  const afirmaAgendamento = /agendad|agendamento confirmado|marcado para|ta marcado|esta marcado|confirmado!/i.test(resposta);
-  if (afirmaAgendamento && !agendouComSucesso) {
-    const jaTinha = jaMarcados.length > 0;
-    if (!jaTinha) {
-      console.error('[' + telefone + '] ALERTA: resposta afirmou agendamento sem gravar. erro=' + ultimoErroFerramenta);
-      resposta = ultimoErroFerramenta === 'horario_ocupado'
-        ? 'Opa, esse horario acabou de ser preenchido. Me diz outro horario que eu verifico pra voce.'
-        : 'Desculpe, nao consegui concluir o agendamento agora. Pode tentar de novo em instantes ou me chamar que um atendente resolve.';
+  // Se a resposta afirma agendamento sem ter gravado, forca a chamada da ferramenta.
+  const afirmaAgendamento = /agendad|agendamento confirmado|marcado para|ta marcado|esta marcado|confirmado[!:]/i.test(resposta);
+
+  if (afirmaAgendamento && !agendouComSucesso && !ultimoErroFerramenta) {
+    console.warn('[' + telefone + '] afirmou agendamento sem chamar a ferramenta. Forcando.');
+    try {
+      const f = await client.messages.create({
+        model: MODELO, max_tokens: 1024, system, tools: FERRAMENTAS,
+        tool_choice: { type: 'tool', name: 'criar_agendamento' },
+        messages
+      });
+      entrada += f.usage.input_tokens;
+      saida += f.usage.output_tokens;
+
+      const chamada = f.content.find(b => b.type === 'tool_use');
+      if (chamada) {
+        const out = await executarFerramenta('criar_agendamento', chamada.input, ctx);
+        console.log('[' + telefone + '] FORCADO ok=' + !!(out && out.ok) + ' args=' + JSON.stringify(chamada.input));
+
+        if (out && out.ok) {
+          agendouComSucesso = true;
+          messages.push({ role: 'assistant', content: f.content });
+          messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: chamada.id, content: JSON.stringify(out) }] });
+          const fim = await client.messages.create({ model: MODELO, max_tokens: 512, system, tools: FERRAMENTAS, messages });
+          entrada += fim.usage.input_tokens;
+          saida += fim.usage.output_tokens;
+          const t = fim.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+          if (t) resposta = t;
+        } else {
+          ultimoErroFerramenta = (out && out.erro) || 'desconhecido';
+        }
+      }
+    } catch (e) {
+      console.error('[' + telefone + '] falha ao forcar agendamento:', e.message);
     }
+  }
+
+  // Trava final: nunca afirmar agendamento que nao foi gravado.
+  if (afirmaAgendamento && !agendouComSucesso) {
+    console.error('[' + telefone + '] ALERTA: bloqueada confirmacao falsa. erro=' + ultimoErroFerramenta);
+    resposta = ultimoErroFerramenta === 'horario_ocupado'
+      ? 'Opa, esse horario acabou de ser preenchido. Me diz outro que eu verifico pra voce.'
+      : 'Desculpe, nao consegui concluir o agendamento agora. Pode tentar de novo em instantes?';
   }
 
   console.log('[' + telefone + '] tokens in=' + entrada + ' out=' + saida);
